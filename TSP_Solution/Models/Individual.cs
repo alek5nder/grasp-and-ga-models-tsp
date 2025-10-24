@@ -35,7 +35,7 @@ namespace TSP_Solution.Models
         public static Individual CreateRandom(int numberOfCities, Random rand)
         {
             var tour = Enumerable.Range(0, numberOfCities).ToList();
-            
+
             // Tasowanie Fisher-Yates
             for (int i = tour.Count - 1; i > 0; i--)
             {
@@ -43,6 +43,10 @@ namespace TSP_Solution.Models
                 (tour[i], tour[j]) = (tour[j], tour[i]); // Zamiana
             }
             return new Individual(tour);
+        }
+        public void SetFitness(double fitness)
+        {
+            Fitness = fitness;
         }
     }
 }

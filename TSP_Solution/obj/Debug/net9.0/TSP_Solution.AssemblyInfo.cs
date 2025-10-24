@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("TSP_Solution")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+4e135f6db75bcb2ef03898b656f22d875d3f6695")]
 [assembly: System.Reflection.AssemblyProductAttribute("TSP_Solution")]
 [assembly: System.Reflection.AssemblyTitleAttribute("TSP_Solution")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

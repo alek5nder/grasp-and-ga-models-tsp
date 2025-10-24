@@ -49,3 +49,4 @@ D:\Studia\IO\TSP_Solution\TSP_Solution\obj\Debug\net9.0\refint\TSP_Solution.dll
 D:\Studia\IO\TSP_Solution\TSP_Solution\obj\Debug\net9.0\TSP_Solution.pdb
 D:\Studia\IO\TSP_Solution\TSP_Solution\obj\Debug\net9.0\TSP_Solution.genruntimeconfig.cache
 D:\Studia\IO\TSP_Solution\TSP_Solution\obj\Debug\net9.0\ref\TSP_Solution.dll
+D:\Studia\IO\TSP_Solution\TSP_Solution\obj\Debug\net9.0\TSP_Solution.sourcelink.json
