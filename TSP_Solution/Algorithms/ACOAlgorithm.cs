@@ -7,26 +7,28 @@ namespace TSP_Solution.Algorithms
 {
     public class AcoAlgorithm
     {
-        private readonly TSPData _data;
+        private readonly PFSPData _data; 
         private readonly Random _rand = new Random();
-        private readonly int _numCities;
+        private readonly int _numJobs; 
 
         // Macierze
         private double[,] _pheromoneMatrix;
-        private readonly double[,] _heuristicMatrix; // (1 / dystans)
+        private readonly double[,] _heuristicMatrix; 
 
-        // --- Parametry ACO do testowania ---
-        private readonly int _antCount;     // Liczba mrówek
-        private readonly int _iterations;   // Liczba generacji
-        private readonly double _alpha;     // Wpływ feromonu
-        private readonly double _beta;      // Wpływ heurystyki (dystansu)
-        private readonly double _rho;       // Współczynnik parowania (evaporation)
-        private readonly double _q;         // Ilość feromonu do złożenia (stała)
+        // Parametry ACO
+        private readonly int _antCount;     
+        private readonly int _iterations;   
+        private readonly double _alpha;     
+        private readonly double _beta;      
+        private readonly double _rho;       
+        private readonly double _q;         
 
-        public AcoAlgorithm(TSPData data, int antCount, int iterations, double alpha, double beta, double rho, double q)
+        // --- ZMODYFIKOWANY KONSTRUKTOR ---
+        // Dodaliśmy opcjonalny argument 'nehSolution'
+        public AcoAlgorithm(PFSPData data, int antCount, int iterations, double alpha, double beta, double rho, double q, Individual nehSolution = null)
         {
             _data = data;
-            _numCities = data.NumberOfCities;
+            _numJobs = data.NumberOfJobs; 
             _antCount = antCount;
             _iterations = iterations;
             _alpha = alpha;
@@ -34,35 +36,53 @@ namespace TSP_Solution.Algorithms
             _rho = rho;
             _q = q;
 
-            // 1. Inicjalizuj macierz heurystyki (1 / dystans)
-            // Robimy to raz, bo jest stała
-            _heuristicMatrix = new double[_numCities, _numCities];
-            for (int i = 0; i < _numCities; i++)
+            // 1. Inicjalizuj macierz heurystyki (bez zmian, 1.0)
+            _heuristicMatrix = new double[_numJobs, _numJobs];
+            for (int i = 0; i < _numJobs; i++)
             {
-                for (int j = 0; j < _numCities; j++)
+                for (int j = 0; j < _numJobs; j++)
                 {
-                    if (i == j)
-                    {
-                        _heuristicMatrix[i, j] = 0;
-                    }
-                    else
-                    {
-                        // Dodajemy epsilon, aby uniknąć dzielenia przez zero
-                        _heuristicMatrix[i, j] = 1.0 / (_data.GetDistance(i, j) + 1e-9);
-                    }
+                    _heuristicMatrix[i, j] = 1.0; 
                 }
             }
 
-            // 2. Inicjalizuj macierz feromonów (początkowo stała wartość)
-            _pheromoneMatrix = new double[_numCities, _numCities];
-            double initialPheromone = 1.0; 
-            for (int i = 0; i < _numCities; i++)
-            {
-                for (int j = 0; j < _numCities; j++)
-                {
+            // 2. Inicjalizuj macierz feromonów
+            _pheromoneMatrix = new double[_numJobs, _numJobs];
+            
+            // Ustaw bazowy poziom feromonu
+            double initialPheromone = 1.0;
+            for (int i = 0; i < _numJobs; i++)
+                for (int j = 0; j < _numJobs; j++)
                     _pheromoneMatrix[i, j] = initialPheromone;
+
+            // 3. "Zasiej" feromony z NEH, jeśli dostępne
+            // To jest nowe "usprawnienie"
+            
+            if (nehSolution != null)
+            {
+                if (nehSolution.Fitness == -1) // Upewnij się, że Cmax jest obliczony
+                {
+                    nehSolution.CalculateFitness(_data);
                 }
+                
+                // Obliczamy "bonusowy" feromon, który złożymy na ścieżce NEH.
+                // Używamy dużej wartości (np. 10x standardowy depozyt), aby mocno 
+                // naprowadzić pierwsze mrówki.
+                double bonusDeposit = (10.0 * _q) / nehSolution.Fitness; 
+                
+                var tour = nehSolution.Tour;
+                for (int i = 0; i < _numJobs - 1; i++)
+                {
+                    int city1 = tour[i];
+                    int city2 = tour[i + 1];
+                    _pheromoneMatrix[city1, city2] += bonusDeposit;
+                    _pheromoneMatrix[city2, city1] += bonusDeposit; // Symetryczny TSP/PFSP
+                }
+                // Dodaj krawędź zamykającą cykl (ostatni -> pierwszy)
+                _pheromoneMatrix[tour.Last(), tour.First()] += bonusDeposit;
+                _pheromoneMatrix[tour.First(), tour.Last()] += bonusDeposit;
             }
+            
         }
 
         public Individual Run()
@@ -79,7 +99,10 @@ namespace TSP_Solution.Algorithms
                 {
                     var tour = BuildAntTour();
                     var individual = new Individual(tour);
-                    individual.CalculateFitness(_data);
+                    
+                    // ZMIANA: Automatycznie wywoła poprawną funkcję
+                    // CalculateFitness(PFSPData) z klasy Individual.
+                    individual.CalculateFitness(_data); 
                     antSolutions.Add(individual);
 
                     if (generationBestIndividual == null || individual.Fitness < generationBestIndividual.Fitness)
@@ -93,8 +116,8 @@ namespace TSP_Solution.Algorithms
                     overallBestIndividual = generationBestIndividual;
                 }
 
-                // 2. Faza Aktualizacji Feromonów
-                UpdatePheromones(overallBestIndividual); // Używamy elityzmu (tylko najlepsza trasa składa feromon)
+                // 2. Faza Aktualizacji Feromonów (bez zmian w logice)
+                UpdatePheromones(overallBestIndividual);
             }
 
             return overallBestIndividual;
@@ -105,11 +128,11 @@ namespace TSP_Solution.Algorithms
         /// </summary>
         private List<int> BuildAntTour()
         {
-            var tour = new List<int>(_numCities);
-            var unvisited = new HashSet<int>(Enumerable.Range(0, _numCities));
+            var tour = new List<int>(_numJobs);
+            var unvisited = new HashSet<int>(Enumerable.Range(0, _numJobs)); // ZMIANA: _numJobs
 
-            // Zacznij od losowego miasta
-            int currentCity = _rand.Next(_numCities);
+            // Zacznij od losowego zadania (miasta)
+            int currentCity = _rand.Next(_numJobs); // ZMIANA: _numJobs
             tour.Add(currentCity);
             unvisited.Remove(currentCity);
 
@@ -125,7 +148,7 @@ namespace TSP_Solution.Algorithms
         }
 
         /// <summary>
-        /// Wybiera następne miasto dla mrówki (Ruletka)
+        /// Wybiera następne miasto dla mrówki (Ruletka) - BEZ ZMIAN W LOGICE
         /// </summary>
         private int SelectNextCity(int currentCity, HashSet<int> unvisited)
         {
@@ -136,7 +159,7 @@ namespace TSP_Solution.Algorithms
             foreach (int nextCity in unvisited)
             {
                 double tau = _pheromoneMatrix[currentCity, nextCity];
-                double eta = _heuristicMatrix[currentCity, nextCity];
+                double eta = _heuristicMatrix[currentCity, nextCity]; // Zawsze będzie 1.0
                 
                 double prob = Math.Pow(tau, _alpha) * Math.Pow(eta, _beta);
                 
@@ -144,10 +167,9 @@ namespace TSP_Solution.Algorithms
                 totalProbSum += prob;
             }
 
-            // Obsługa błędu, jeśli suma = 0
             if (totalProbSum == 0)
             {
-                return unvisited.First(); // Wybierz jakiekolwiek
+                return unvisited.First(); 
             }
 
             // Ruletka (losowanie)
@@ -169,9 +191,9 @@ namespace TSP_Solution.Algorithms
         private void UpdatePheromones(Individual bestIndividual)
         {
             // 1. Parowanie (Evaporation) na wszystkich ścieżkach
-            for (int i = 0; i < _numCities; i++)
+            for (int i = 0; i < _numJobs; i++) // ZMIANA: _numJobs
             {
-                for (int j = 0; j < _numCities; j++)
+                for (int j = 0; j < _numJobs; j++) // ZMIANA: _numJobs
                 {
                     _pheromoneMatrix[i, j] *= (1.0 - _rho);
                 }
@@ -181,14 +203,13 @@ namespace TSP_Solution.Algorithms
             double depositAmount = _q / bestIndividual.Fitness;
             var tour = bestIndividual.Tour;
 
-            for (int i = 0; i < _numCities - 1; i++)
+            for (int i = 0; i < _numJobs - 1; i++) // ZMIANA: _numJobs
             {
                 int city1 = tour[i];
                 int city2 = tour[i + 1];
                 _pheromoneMatrix[city1, city2] += depositAmount;
-                _pheromoneMatrix[city2, city1] += depositAmount; // Symetryczny TSP
+                _pheromoneMatrix[city2, city1] += depositAmount; 
             }
-            // Dodaj krawędź zamykającą cykl (ostatni -> pierwszy)
             _pheromoneMatrix[tour.Last(), tour.First()] += depositAmount;
             _pheromoneMatrix[tour.First(), tour.Last()] += depositAmount;
         }

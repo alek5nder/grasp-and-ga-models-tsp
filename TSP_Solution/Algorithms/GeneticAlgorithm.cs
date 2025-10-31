@@ -7,124 +7,340 @@ namespace TSP_Solution.Algorithms
 {
     public class GeneticAlgorithm
     {
-        private readonly TSPData _data;
+        private readonly PFSPData _data; // Poprawny typ danych PFSP
         private readonly Random _rand = new Random();
-        
+
         // Parametry GA
-        private int _populationSize;
-        private double _mutationRate;
-        private int _tournamentSize;
-        private int _generations; 
+        private readonly int _populationSize;
+        private readonly double _mutationRate;
+        private readonly int _tournamentSize;
+        private readonly int _generations;
 
-        // Parametry Strategii (z wytycznych)
-        private SelectionMethod _selectionMethod;
-        private CrossoverMethod _crossoverMethod;
-        private MutationMethod _mutationMethod;
+        // Metody
+        private readonly SelectionMethod _selectionMethod;
+        private readonly CrossoverMethod _crossoverMethod;
+        private readonly MutationMethod _mutationMethod;
 
-        private List<Individual> _population;
-
-        // Konstruktor
-        public GeneticAlgorithm(TSPData data, int populationSize, double mutationRate, int tournamentSize, int generations,
-                                SelectionMethod selection, CrossoverMethod crossover, MutationMethod mutation)
+        // Konstruktor przyjmujący PFSPData
+        public GeneticAlgorithm(PFSPData data, int populationSize, double mutationRate, 
+                                int tournamentSize, int generations,
+                                SelectionMethod selectionMethod, CrossoverMethod crossoverMethod, 
+                                MutationMethod mutationMethod)
         {
             _data = data;
             _populationSize = populationSize;
             _mutationRate = mutationRate;
             _tournamentSize = tournamentSize;
             _generations = generations;
-            _population = new List<Individual>(_populationSize);
-
-            _selectionMethod = selection;
-            _crossoverMethod = crossover;
-            _mutationMethod = mutation;
+            _selectionMethod = selectionMethod;
+            _crossoverMethod = crossoverMethod;
+            _mutationMethod = mutationMethod;
         }
+        
+        // --- NOWA, SZYBKA METODA INICJALIZACJI Z NEH ---
+        /// <summary>
+        /// Inicjalizuje populację używając "Zasiana Hybrydowego" (NEH + Losowe).
+        /// Daje to GA zarówno dobrego kandydata (NEH) jak i różnorodność (Losowi).
+        /// </summary>
+        private List<Individual> InitializePopulation()
+        {
+            var population = new List<Individual>(_populationSize);
+            int numJobs = _data.NumberOfJobs;
+
+            // 1. Uruchom NEH, aby uzyskać jedno, bardzo dobre rozwiązanie
+            var nehAlgorithm = new NehAlgorithm(_data);
+            Individual nehSolution = nehAlgorithm.Run();
+            nehSolution.CalculateFitness(_data);
+            
+            // 2. Dodaj to najlepsze rozwiązanie bezpośrednio do populacji
+            population.Add(nehSolution); 
+            Console.WriteLine($" -> NEH Seed Cmax: {nehSolution.Fitness}");
+
+            // --- TUTAJ ZACZYNA SIĘ ZMIANA ---
+
+            // 3. Oblicz, ile dodać klonów, a ile losowych
+            // Połowa populacji będzie oparta na NEH, a druga połowa czysto losowa
+            int numClones = (_populationSize / 2) - 1; // Odejmujemy 1 za już dodany nehSolution
+            int numRandom = _populationSize - population.Count - numClones;
+
+            // 4. Dodaj "lekkie mutacje" NEH (Klony)
+            for (int i = 0; i < numClones; i++)
+            {
+                var mutatedTour = new List<int>(nehSolution.Tour);
+                int numSwaps = 3; 
+                for(int k=0; k < numSwaps; k++)
+                {
+                     int p1 = _rand.Next(numJobs);
+                     int p2 = _rand.Next(numJobs);
+                     (mutatedTour[p1], mutatedTour[p2]) = (mutatedTour[p2], mutatedTour[p1]);
+                }
+                
+                var individual = new Individual(mutatedTour);
+                individual.CalculateFitness(_data);
+                population.Add(individual);
+            }
+
+            // 5. Dodaj CZYSTO LOSOWYCH osobników (to jest klucz do różnorodności)
+            for (int i = 0; i < numRandom; i++)
+            {
+                var randomIndividual = Individual.CreateRandom(numJobs, _rand);
+                randomIndividual.CalculateFitness(_data);
+                population.Add(randomIndividual);
+            }
+
+            return population;
+        }
+        //
+        // --- RESZTA PLIKU POZOSTAJE BEZ ZMIAN ---
+        // Poniższe metody są uniwersalne i działają poprawnie z PFSP
+        // (Run, EvolvePopulation, SelectParent, Selections, Crossover, Mutations...)
+        //
 
         public Individual Run()
         {
-            InitializePopulation();
-            
-            for (int gen = 0; gen < _generations; gen++)
+            var population = InitializePopulation();
+            var bestOverall = population.OrderBy(ind => ind.Fitness).First();
+
+            for (int i = 0; i < _generations; i++)
             {
-                var newPopulation = new List<Individual>(_populationSize);
+                population = EvolvePopulation(population);
+                var bestOfGeneration = population.OrderBy(ind => ind.Fitness).First();
 
-                // 1. Elityzm (zachowaj najlepszego osobnika bez zmian)
-                // 1. Elityzm (zachowaj najlepszego osobnika bez zmian)
-                var bestIndividual = _population.OrderBy(ind => ind.Fitness).First();
-                newPopulation.Add(bestIndividual); // <-- POPRAWNA LINIA
-
-                while (newPopulation.Count < _populationSize)
+                if (bestOfGeneration.Fitness < bestOverall.Fitness)
                 {
-                    // 2a. Selekcja rodziców
-                    Individual parent1 = SelectParent();
-                    Individual parent2 = SelectParent();
-                    
-                    // 2b. Krzyżowanie
-                    Individual child = Crossover(parent1, parent2);
-                    
-                    // 2c. Mutacja
-                    Mutate(child);
-                    
-                    newPopulation.Add(child);
-                }
-                
-                _population = newPopulation;
-                
-                // Oblicz fitness dla nowej populacji (z wyjątkiem elity, która już ma)
-                foreach (var ind in _population.Skip(1)) // Pomiń elitę
-                {
-                    ind.CalculateFitness(_data);
+                    bestOverall = bestOfGeneration;
                 }
             }
-            // Zwróć najlepszego osobnika znalezionego w całej ewolucji
-            return _population.OrderBy(ind => ind.Fitness).First();
+            return bestOverall;
         }
 
-        private void InitializePopulation()
+        private List<Individual> EvolvePopulation(List<Individual> currentPopulation)
         {
-            for (int i = 0; i < _populationSize; i++)
+            var newPopulation = new List<Individual>(_populationSize);
+
+            // Elityzm: Zachowaj najlepszego osobnika
+            var elite = currentPopulation.OrderBy(ind => ind.Fitness).First();
+            newPopulation.Add(new Individual(new List<int>(elite.Tour)) { Fitness = elite.Fitness });
+
+            while (newPopulation.Count < _populationSize)
             {
-                var individual = Individual.CreateRandom(_data.NumberOfCities, _rand);
-                individual.CalculateFitness(_data);
-                _population.Add(individual);
+                var parent1 = SelectParent(currentPopulation);
+                var parent2 = SelectParent(currentPopulation);
+
+                var (child1, child2) = Crossover(parent1, parent2);
+
+                Mutate(child1);
+                Mutate(child2);
+
+                child1.CalculateFitness(_data);
+                child2.CalculateFitness(_data);
+
+                newPopulation.Add(child1);
+                if (newPopulation.Count < _populationSize)
+                {
+                    newPopulation.Add(child2);
+                }
             }
+            return newPopulation;
         }
 
-        // --- "DYSPOCZYTORNIE" METOD ---
-
-        private Individual SelectParent()
+        // --- SELEKCJA (BEZ ZMIAN) ---
+        private Individual SelectParent(List<Individual> population)
         {
             switch (_selectionMethod)
             {
                 case SelectionMethod.Tournament:
-                    return TournamentSelection();
+                    return TournamentSelection(population);
                 case SelectionMethod.Roulette:
-                    return RouletteWheelSelection(); // Zaimplementowane
+                    return RouletteWheelSelection(population);
                 case SelectionMethod.Ranking:
-                    return RankingSelection(); // Zaimplementowane
+                    return RankingSelection(population);
                 default:
-                    return TournamentSelection();
+                    throw new ArgumentException("Nieznana metoda selekcji.");
             }
         }
 
-        private Individual Crossover(Individual parent1, Individual parent2)
+        private Individual TournamentSelection(List<Individual> population)
+        {
+            Individual best = null;
+            for (int i = 0; i < _tournamentSize; i++)
+            {
+                var randomInd = population[_rand.Next(population.Count)];
+                if (best == null || randomInd.Fitness < best.Fitness)
+                {
+                    best = randomInd;
+                }
+            }
+            return best;
+        }
+        
+        // Ta implementacja jest poprawna dla minimalizacji (Fitness = Cmax)
+        private Individual RouletteWheelSelection(List<Individual> population)
+        {
+            double worstFitness = population.Max(ind => ind.Fitness) + 1.0;
+            var weightedPopulation = population
+                .Select(ind => new { Individual = ind, Weight = (worstFitness - ind.Fitness) })
+                .ToList();
+            
+            double totalWeight = weightedPopulation.Sum(x => x.Weight);
+            double spin = _rand.NextDouble() * totalWeight;
+
+            foreach (var weightedInd in weightedPopulation)
+            {
+                if (spin < weightedInd.Weight)
+                {
+                    return weightedInd.Individual;
+                }
+                spin -= weightedInd.Weight;
+            }
+            return population.Last();
+        }
+
+        private Individual RankingSelection(List<Individual> population)
+        {
+            var sortedPopulation = population.OrderBy(ind => ind.Fitness).ToList();
+            int n = sortedPopulation.Count;
+            double totalRankSum = (double)n * (n + 1) / 2.0;
+
+            double spin = _rand.NextDouble() * totalRankSum;
+            double currentSum = 0;
+
+            for (int i = 0; i < n; i++)
+            {
+                int rank = n - i; // Najlepszy (index 0) ma rangę N, najgorszy ma rangę 1
+                currentSum += rank;
+                if (spin < currentSum)
+                {
+                    return sortedPopulation[i];
+                }
+            }
+            return sortedPopulation.Last();
+        }
+
+
+        // --- KRZYŻOWANIE (BEZ ZMIAN) ---
+        private (Individual, Individual) Crossover(Individual parent1, Individual parent2)
         {
             switch (_crossoverMethod)
             {
                 case CrossoverMethod.PMX:
                     return PMXCrossover(parent1, parent2);
                 case CrossoverMethod.OX:
-                    return OXCrossover(parent1, parent2); // Zaimplementowane
+                    return OXCrossover(parent1, parent2);
                 case CrossoverMethod.CX:
-                    return CXCrossover(parent1, parent2); // Zaimplementowane
+                    return CXCrossover(parent1, parent2);
                 default:
-                    return PMXCrossover(parent1, parent2);
+                    throw new ArgumentException("Nieznana metoda krzyżowania.");
             }
         }
 
+        private (Individual, Individual) PMXCrossover(Individual parent1, Individual parent2)
+        {
+            int size = parent1.Tour.Count;
+            var child1Tour = Enumerable.Repeat(-1, size).ToList();
+            var child2Tour = Enumerable.Repeat(-1, size).ToList();
+
+            (int p1, int p2) = GetTwoRandomPoints(size);
+
+            var map1 = new Dictionary<int, int>();
+            var map2 = new Dictionary<int, int>();
+
+            for (int i = p1; i <= p2; i++)
+            {
+                child1Tour[i] = parent2.Tour[i];
+                child2Tour[i] = parent1.Tour[i];
+                map1[parent2.Tour[i]] = parent1.Tour[i];
+                map2[parent1.Tour[i]] = parent2.Tour[i];
+            }
+
+            for (int i = 0; i < size; i++)
+            {
+                if (i >= p1 && i <= p2) continue;
+                
+                int gene1 = parent1.Tour[i];
+                while (map1.ContainsKey(gene1))
+                {
+                    gene1 = map1[gene1];
+                }
+                child1Tour[i] = gene1;
+
+                int gene2 = parent2.Tour[i];
+                while (map2.ContainsKey(gene2))
+                {
+                    gene2 = map2[gene2];
+                }
+                child2Tour[i] = gene2;
+            }
+            return (new Individual(child1Tour), new Individual(child2Tour));
+        }
+
+        private (Individual, Individual) OXCrossover(Individual parent1, Individual parent2)
+        {
+            int size = parent1.Tour.Count;
+            var child1Tour = Enumerable.Repeat(-1, size).ToList();
+            var child2Tour = Enumerable.Repeat(-1, size).ToList();
+
+            (int p1, int p2) = GetTwoRandomPoints(size);
+
+            for (int i = p1; i <= p2; i++)
+            {
+                child1Tour[i] = parent1.Tour[i];
+                child2Tour[i] = parent2.Tour[i];
+            }
+
+            var items1 = child1Tour.Where(x => x != -1).ToHashSet();
+            var items2 = child2Tour.Where(x => x != -1).ToHashSet();
+
+            int currentIdx = 0;
+            for (int i = 0; i < size; i++)
+            {
+                if (currentIdx == p1) currentIdx = p2 + 1;
+                if (!items1.Contains(parent2.Tour[i]))
+                {
+                    child1Tour[currentIdx++] = parent2.Tour[i];
+                }
+            }
+
+            currentIdx = 0;
+            for (int i = 0; i < size; i++)
+            {
+                if (currentIdx == p1) currentIdx = p2 + 1;
+                if (!items2.Contains(parent1.Tour[i]))
+                {
+                    child2Tour[currentIdx++] = parent1.Tour[i];
+                }
+            }
+            return (new Individual(child1Tour), new Individual(child2Tour));
+        }
+        
+        private (Individual, Individual) CXCrossover(Individual parent1, Individual parent2)
+        {
+            int size = parent1.Tour.Count;
+            var child1Tour = new List<int>(parent1.Tour);
+            var child2Tour = new List<int>(parent2.Tour);
+
+            int startIndex = 0;
+            var cycle = new HashSet<int>();
+            
+            while(!cycle.Contains(startIndex))
+            {
+                cycle.Add(startIndex);
+                int gene = parent2.Tour[startIndex];
+                startIndex = parent1.Tour.IndexOf(gene);
+            }
+
+            foreach(int index in cycle)
+            {
+                (child1Tour[index], child2Tour[index]) = (child2Tour[index], child1Tour[index]);
+            }
+            
+            return (new Individual(child1Tour), new Individual(child2Tour));
+        }
+
+        // --- MUTACJA (BEZ ZMIAN) ---
         private void Mutate(Individual individual)
         {
-            // Sprawdzenie prawdopodobieństwa mutacji
-            if (_rand.NextDouble() > _mutationRate) return; 
+            if (_rand.NextDouble() >= _mutationRate) return;
 
             switch (_mutationMethod)
             {
@@ -132,217 +348,51 @@ namespace TSP_Solution.Algorithms
                     SwapMutation(individual);
                     break;
                 case MutationMethod.Inversion:
-                    InversionMutation(individual); // Zaimplementowane
+                    InversionMutation(individual);
                     break;
                 case MutationMethod.Scramble:
-                    ScrambleMutation(individual); // Zaimplementowane
-                    break;
-                default:
-                    SwapMutation(individual);
+                    ScrambleMutation(individual);
                     break;
             }
         }
-
-
-        // --- METODY SELEKCJI ---
-
-        // Metoda Turniejowa (już istniała)
-        private Individual TournamentSelection()
-        {
-            var tournament = new List<Individual>();
-            for (int i = 0; i < _tournamentSize; i++)
-            {
-                int randomIndex = _rand.Next(_populationSize);
-                tournament.Add(_population[randomIndex]);
-            }
-            // Zwraca najlepszego (z najniższym fitnessem)
-            return tournament.OrderBy(ind => ind.Fitness).First();
-        }
         
-        // NOWA: Metoda Ruletkowa
-        private Individual RouletteWheelSelection()
-        {
-            // Niższy fitness (dystans) jest lepszy, więc musimy odwrócić wagi
-            double worstFitness = _population.Max(ind => ind.Fitness);
-            var weights = _population.Select(ind => (worstFitness - ind.Fitness) + 1.0).ToList();
-            double totalWeight = weights.Sum();
-
-            double randomValue = _rand.NextDouble() * totalWeight;
-            
-            for (int i = 0; i < _populationSize; i++)
-            {
-                if (randomValue < weights[i])
-                {
-                    return _population[i];
-                }
-                randomValue -= weights[i];
-            }
-            return _population.Last(); // Fallback
-        }
-
-        // NOWA: Metoda Rankingowa
-        private Individual RankingSelection()
-        {
-            var sortedPopulation = _population.OrderBy(ind => ind.Fitness).ToList();
-            int n = _populationSize;
-            double totalRankSum = n * (n + 1) / 2.0;
-            
-            double randomValue = _rand.NextDouble() * totalRankSum;
-
-            for (int i = 0; i < n; i++)
-            {
-                int rank = n - i; // Najlepszy (i=0) ma rangę n (największą)
-                if (randomValue < rank)
-                {
-                    return sortedPopulation[i];
-                }
-                randomValue -= rank;
-            }
-            return sortedPopulation.First(); // Fallback
-        }
-
-        // --- METODY KRZYŻOWANIA ---
-
-        // Metoda PMX (już istniała)
-        private Individual PMXCrossover(Individual parent1, Individual parent2)
-        {
-            int size = parent1.Tour.Count;
-            var childTour = new int[size].Select(_ => -1).ToList(); 
-            
-            int cp1 = _rand.Next(size);
-            int cp2 = _rand.Next(size);
-            if (cp1 > cp2) (cp1, cp2) = (cp2, cp1);
-
-            var mapping = new Dictionary<int, int>();
-            for (int i = cp1; i <= cp2; i++)
-            {
-                childTour[i] = parent1.Tour[i];
-                mapping[parent1.Tour[i]] = parent2.Tour[i];
-            }
-
-            for (int i = 0; i < size; i++)
-            {
-                if (i >= cp1 && i <= cp2) continue; 
-
-                int cityToAdd = parent2.Tour[i];
-                while (mapping.ContainsKey(cityToAdd))
-                {
-                    cityToAdd = mapping[cityToAdd];
-                }
-                childTour[i] = cityToAdd;
-            }
-            return new Individual(childTour);
-        }
-
-        // NOWA: Metoda OX (Order Crossover)
-        private Individual OXCrossover(Individual parent1, Individual parent2)
-        {
-            int size = parent1.Tour.Count;
-            var childTour = new int[size].Select(_ => -1).ToList();
-
-            int cp1 = _rand.Next(size);
-            int cp2 = _rand.Next(size);
-            if (cp1 > cp2) (cp1, cp2) = (cp2, cp1);
-
-            var segment = new HashSet<int>();
-            for (int i = cp1; i <= cp2; i++)
-            {
-                childTour[i] = parent1.Tour[i];
-                segment.Add(parent1.Tour[i]);
-            }
-
-            int childIndex = (cp2 + 1) % size;
-            for (int i = 0; i < size; i++)
-            {
-                int parentIndex = (cp2 + 1 + i) % size;
-                int city = parent2.Tour[parentIndex];
-
-                if (!segment.Contains(city))
-                {
-                    childTour[childIndex] = city;
-                    childIndex = (childIndex + 1) % size;
-                }
-            }
-            return new Individual(childTour);
-        }
-        
-        // NOWA: Metoda CX (Cycle Crossover)
-        private Individual CXCrossover(Individual parent1, Individual parent2)
-        {
-            int size = parent1.Tour.Count;
-            var childTour = new int[size].Select(_ => -1).ToList();
-            var p1Tour = parent1.Tour;
-            var p2Tour = parent2.Tour;
-
-            var visited = new bool[size];
-            
-            int currentIndex = 0;
-            while (visited[currentIndex] == false)
-            {
-                visited[currentIndex] = true;
-                int cityFromP1 = p1Tour[currentIndex];
-                childTour[currentIndex] = cityFromP1; 
-                
-                int cityFromP2 = p2Tour[currentIndex];
-                currentIndex = p1Tour.IndexOf(cityFromP2);
-            }
-
-            for (int i = 0; i < size; i++)
-            {
-                if (childTour[i] == -1) // Niewypełnione przez cykl
-                {
-                    childTour[i] = p2Tour[i];
-                }
-            }
-            return new Individual(childTour);
-        }
-
-        // --- METODY MUTACJI ---
-
-        // Metoda Swap (już istniała, lekko zmodyfikowana)
         private void SwapMutation(Individual individual)
         {
-            int index1 = _rand.Next(individual.Tour.Count);
-            int index2 = _rand.Next(individual.Tour.Count);
-            while (index1 == index2)
-            {
-                index2 = _rand.Next(individual.Tour.Count);
-            }
-            (individual.Tour[index1], individual.Tour[index2]) = (individual.Tour[index2], individual.Tour[index1]);
+            (int p1, int p2) = GetTwoRandomPoints(individual.Tour.Count, false);
+            (individual.Tour[p1], individual.Tour[p2]) = (individual.Tour[p2], individual.Tour[p1]);
         }
 
-        // NOWA: Metoda Inversion (Inwersja)
         private void InversionMutation(Individual individual)
         {
-            int cp1 = _rand.Next(individual.Tour.Count);
-            int cp2 = _rand.Next(individual.Tour.Count);
-            if (cp1 > cp2) (cp1, cp2) = (cp2, cp1);
-
-            // Odwróć segment pomiędzy cp1 a cp2
-            individual.Tour.Reverse(cp1, (cp2 - cp1) + 1);
+            (int p1, int p2) = GetTwoRandomPoints(individual.Tour.Count);
+            individual.Tour.Reverse(p1, p2 - p1 + 1);
         }
 
-        // NOWA: Metoda Scramble (Mieszanie)
         private void ScrambleMutation(Individual individual)
         {
-            int cp1 = _rand.Next(individual.Tour.Count);
-            int cp2 = _rand.Next(individual.Tour.Count);
-            if (cp1 > cp2) (cp1, cp2) = (cp2, cp1);
+            (int p1, int p2) = GetTwoRandomPoints(individual.Tour.Count);
+            var segment = individual.Tour.GetRange(p1, p2 - p1 + 1);
+            
+            for (int k = segment.Count - 1; k > 0; k--)
+            {
+                int l = _rand.Next(k + 1);
+                (segment[k], segment[l]) = (segment[l], segment[k]);
+            }
+            for (int k = 0; k < segment.Count; k++)
+            {
+                individual.Tour[p1 + k] = segment[k];
+            }
+        }
 
-            var segment = individual.Tour.GetRange(cp1, (cp2 - cp1) + 1);
-            
-            // Potasuj segment (Fisher-Yates)
-            for (int i = segment.Count - 1; i > 0; i--)
+        private (int, int) GetTwoRandomPoints(int size, bool allowEqual = false)
+        {
+            int p1 = _rand.Next(size);
+            int p2 = _rand.Next(size);
+            if (!allowEqual)
             {
-                int j = _rand.Next(i + 1);
-                (segment[i], segment[j]) = (segment[j], segment[i]);
+                while (p1 == p2) p2 = _rand.Next(size);
             }
-            
-            // Wstaw potasowany segment z powrotem
-            for(int i = 0; i < segment.Count; i++)
-            {
-                individual.Tour[cp1 + i] = segment[i];
-            }
+            return p1 < p2 ? (p1, p2) : (p2, p1);
         }
     }
 }
